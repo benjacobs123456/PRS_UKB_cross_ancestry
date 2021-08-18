@@ -294,3 +294,5 @@ null_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0,famil
 full_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
 
 nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null
+
+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
