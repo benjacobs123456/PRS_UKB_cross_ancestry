@@ -257,7 +257,7 @@ table(ukb_pheno$MS_status,ukb_pheno$genetically_british)
 ````
 Tabulating the genetic ancestry (Genetic ethnic grouping) vs MS status, we can see that ~300 people from non-European genetic backgrounds have MS
 
-MS status | Non-british | British 
+MS status | Non-british | British
 --------- | ----------- | -------
 Control   | 78340       | 407493
 Case      | 303         | 2102
