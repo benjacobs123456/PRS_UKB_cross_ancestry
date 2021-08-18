@@ -114,6 +114,7 @@ for i in {1..22};
 ````
 
 ### PCA with 1kg samples and UKB
+First download 1kg reference samples
 ````unix
 #! /bin/bash
 #$ -pe smp 40
@@ -126,12 +127,23 @@ for i in {1..22};
 #$ -t 1:22
 
 cd /data/scratch/hmy117
-module load plink
 
 # wget 1kg
 wget ftp-trace.ncbi.nih.gov/1000genomes/ftp/release/20130502/ALL.chr${SGE_TASK_ID}\.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz
+````
+Then merge with UKB PLINK files
+````unix
+#! /bin/bash
+#$ -pe smp 1
+#$ -l h_vmem=16G
+#$ -l h_rt=1:0:0
+#$ -cwd
+#$ -j y
+#$ -o /data/scratch/hmy117
+#$ -t 1:22
 
-
+cd /data/scratch/hmy117
+module load plink
 # convert 1kg to plink
 plink --vcf ALL.chr${SGE_TASK_ID}\.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
 --make-bed \
@@ -144,7 +156,7 @@ plink --bfile plink_1kg_chr${SGE_TASK_ID} \
 --out combined_plink_chr${SGE_TASK_ID}
 
 plink --bfile plink_1kg_chr${SGE_TASK_ID} \
---exclude combined_plink_chr${SGE_TASK_ID}-merge.missnp \
+--exclude combined_plink_chr${SGE_TASK_ID}\.missnp \
 --make-bed \
 --out fixed_1kg_chr${SGE_TASK_ID}
 
@@ -197,6 +209,7 @@ plink --bfile combined_pruned_genotypes_for_pca_chr1 \
 singularity exec /data/containers/flashpca/debian-flashpca.simg flashpca --bfile combined_genotypes_for_pca
 ````
 
+Now we can explore the data in R.
 
 ````R
 library(dplyr)
@@ -233,44 +246,51 @@ source_of_report_data = source_of_report_data %>% mutate(MS_status = ifelse(!is.
 
 # read in remainder of phenotype data
 ukb_pheno = read_tsv("../ukb_pheno_911/ukb_pheno_final_MS_1301")
-ukb_pheno = ukb_pheno %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,`Ethnic background.0.0`,contains("rincipal components"))
+ukb_pheno = ukb_pheno %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,`Ethnic background.0.0`,contains("rincipal components"),contains("ethnic grouping"))
 
 # combine
 ukb_pheno = ukb_pheno %>% left_join(source_of_report_data,by="EID")
 
 # tabulate MS cases vs self-reported ethnicity
-table(ukb_pheno$MS_status,ukb_pheno$`Ethnic background.0.0`)
+ukb_pheno = ukb_pheno %>% mutate(genetically_british = ifelse(!is.na(`Genetic ethnic grouping.0.0`),1,0))
+table(ukb_pheno$MS_status,ukb_pheno$genetically_british)
+````
+Tabulating the genetic ancestry (Genetic ethnic grouping) vs MS status, we can see that ~300 people from non-European genetic backgrounds have MS
 
-ukb_pheno %>% group_by(`Ethnic background.0.0`) %>% summarise(n_MS = sum(MS_status))
+MS status | Non-british | British 
+--------- | ----------- | -------
+Control   | 78340       | 407493
+Case      | 303         | 2102
 
+````R
 # combine with PRS
 ukb_pheno = ukb_pheno %>% left_join(prs_scores %>% rename(EID=IID),by="EID")
 
 # remove NAs
 ukb_pheno = ukb_pheno %>% filter(!is.na(MS_status))
-
 ````
+Plotting the PRS distribution in the whole cohort shows a nice separation of cases and controls.
+````R
+png("prs_distro_overall.png",height=6,width=6,res=300,units="in")
+ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))
+dev.off()
+````
+!(https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_overall.png)
 
-African Any other Asian background Any other Black background
-FALSE    3201                       1747                        118
-TRUE        3                          0                          0
+The separation of cases and controls is weakened among people of non-British (i.e. non-European) genetic ancestry.
+````R
+ukb_pheno = ukb_pheno %>% mutate(genetically_british = ifelse(genetically_british==0,"Genetically non-British","Genetically British"))
 
- Any other mixed background Any other white background
-FALSE                        991                      15733
-TRUE                           5                         83
+png("prs_distro_ancestry.png",height=6,width=6,res=300,units="in")
+ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))+facet_wrap(~genetically_british)
+dev.off()
+````
+!(https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_ancestry.png)
+Calculating variance explained (Nagelkerke's Pseudo-R2) demonstrates this quantitatively.
+````R
+library(rcompanion)
 
- Asian or Asian British Bangladeshi Black or Black British British
-FALSE                     42         221                     26  428786
-TRUE                       0           0                      0    2209
+null_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
+full_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
 
- Caribbean Chinese Do not know Indian  Irish  Mixed Other ethnic group
-FALSE      4282    1503         203   5710  12707     46               4348
-TRUE         15       1           1      6     47      0                  7
-
- Pakistani Prefer not to answer  White White and Asian
-FALSE      1745                 1573    542             800
-TRUE          2                    9      3               2
-
- White and Black African White and Black Caribbean
-FALSE                     399                       592
-TRUE                        3                         5
+nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null
