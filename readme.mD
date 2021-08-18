@@ -275,7 +275,7 @@ png("prs_distro_overall.png",height=6,width=6,res=300,units="in")
 ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))
 dev.off()
 ````
-[PRS_distro_all]!(https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_overall.png)
+[PRS_distro_all](https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_overall.png)
 
 The separation of cases and controls is weakened among people of non-British (i.e. non-European) genetic ancestry.
 ````R
@@ -285,12 +285,31 @@ png("prs_distro_ancestry.png",height=6,width=6,res=300,units="in")
 ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))+facet_wrap(~genetically_british)
 dev.off()
 ````
-[PRS_distro_ancestry]!(https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_ancestry.png)
+[PRS_distro_ancestry](https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_ancestry.png)
+
 Calculating variance explained (Nagelkerke's Pseudo-R2) demonstrates this quantitatively.
 ````R
 library(rcompanion)
 
 null_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
 full_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
+overall=nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
 
-nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null
+null_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically British"),MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
+full_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically British"),MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
+british = nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
+
+null_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically non-British"),MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
+full_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically non-British"),MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
+nonbritish = nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
+
+c(overall,british,nonbritish)
+````
+Variance explained (Nagelkerke pseudo-R2) by PRS:
+
+                                | Non-british | British   | Overall
+---------                       | ----------- | -------   | --------
+Nagelkerke's pseudo-R2          | 0.0168894   | 0.0213398 | 0.0209131
+
+
+````R
