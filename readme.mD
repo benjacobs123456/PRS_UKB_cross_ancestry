@@ -308,7 +308,7 @@ c(overall,british,nonbritish)
 Variance explained (Nagelkerke pseudo-R2) by PRS:
 
                                 | Non-british | British   | Overall
----------                       | ----------- | -------   | --------
+--------------------------------| ----------- | -------   | --------
 Nagelkerke's pseudo-R2          | 0.0168894   | 0.0213398 | 0.0209131
 
 
