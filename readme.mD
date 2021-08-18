@@ -275,7 +275,7 @@ png("prs_distro_overall.png",height=6,width=6,res=300,units="in")
 ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))
 dev.off()
 ````
-[PRS_distro_all](https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_overall.png)
+[PRS_distro_all]!(https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_overall.png)
 
 The separation of cases and controls is weakened among people of non-British (i.e. non-European) genetic ancestry.
 ````R
@@ -285,7 +285,7 @@ png("prs_distro_ancestry.png",height=6,width=6,res=300,units="in")
 ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))+facet_wrap(~genetically_british)
 dev.off()
 ````
-[PRS_distro_ancestry](https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_ancestry.png)
+[PRS_distro_ancestry]!(https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_ancestry.png)
 Calculating variance explained (Nagelkerke's Pseudo-R2) demonstrates this quantitatively.
 ````R
 library(rcompanion)
