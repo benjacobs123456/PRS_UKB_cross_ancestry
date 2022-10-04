@@ -1,8 +1,8 @@
 # PRS distributions in UKB MS
 
-We're going to generate polygenic risk scores for MS using GWAS from European populations. We're going to apply these scores in UKB and demonstrate that they perform poorly for people of non-European ancestries.
+This pipeline was used to generate PRS in UKB participants of EUR ancestry, and compare the performance with a similarly-constructed PRS in Genes & Health. The pipeline used for Genes & Health is gh_prs_pipeline.mD.
 
-## 0. Filter UKB imputed genotype files in PLINK2
+## Filter UKB imputed genotype files in PLINK2
 
 ````unix
 #! /bin/bash
@@ -44,11 +44,11 @@ cp $TMPDIR/chr_${SGE_TASK_ID}\.psam /data/Wolfson-UKBB-Dobson/imputed_ukb_genoty
 echo "moved pgen back to normal directory"
 ````
 
-## 1. Generate polygenic scores  
+## Variant & Individual QC  
 ````R
 library(dplyr)
 library(readr)
-
+setwd("/data/home/hmy117/PRS_UKB_cross_ancestry/")
 # read in MS chip discovery GWAS stats
 df = read_table2("/data/Wolfson-UKBB-Dobson/mschip_discovery_gwas/discovery_metav3.0.meta")
 
@@ -64,179 +64,43 @@ df = df %>% mutate(SNPID = paste0(CHR,":",BP))
 ukb_snps = ukb_snps %>% mutate(SNPID = paste0(`#CHROM`,":",POS))
 df = df %>% filter(SNPID %in% ukb_snps$SNPID)
 
-# filter to P < 5e-8
-df = df %>% filter(P<5e-8)
-
 # filter to biallelic SNVs
 df = df %>% filter(nchar(A1)==1 & nchar(A2)==1)
 
 # remove overlapping positions
 df = df %>% distinct(SNPID,.keep_all=TRUE)
 
+# remove duplicated rsids
+df = df %>% distinct(SNP,.keep_all=TRUE)
+
 # filter to rsIDs only
 df = df %>% filter(grepl("rs",SNP))
 
+# filter NAs
+df = df %>% filter(!is.na(P))
+
+# filter out palindromic
+df = df %>%
+filter(!(A1 == "T" & A2 =="A") & !(A1=="A" & A2=="T")) %>%
+filter(!(A1 == "C" & A2 =="G") & !(A1=="G" & A2=="C"))
+
 # prepare file for score and clumping
-df = df %>% mutate(beta = log(OR)) %>% select(SNP,A1,beta,P)
+df = df %>% mutate(beta = log(OR)) %>% select(-N)
+
+df = df %>% mutate("z_score" = qnorm(1-(P/2))) # se as beta/z
+df = df %>% mutate("se" = sqrt((beta/z_score)^2))
+df = df %>% rename('effect_allele' = A1, 'other_allele' = A2, 'pval'=P)
+
+# filter P <= 0.5
+df = df %>% filter(pval <= 0.5)
 
 # write to file
-write_tsv(df,"ms_prs_snps")
-````
+write_tsv(df,"ms_prs_snps.tsv")
 
-# Clump SNPs per chromosome in plink using EUR 1kg samples
-````unix
-cd /data/Wolfson-UKBB-Dobson/PRS_cross_ancestry/
-module load plink
-
-rm ms_prs_snps_clumped
-for i in {1..22};
-  do
-    plink --bfile /data/Wolfson-UKBB-Dobson/1kg_reference/filtered_chr$i \
-  --clump ms_prs_snps \
-  --clump-r2 0.1 \
-  --out clumped_snps_chr$i
-    awk 'NR>1{print $3}' clumped_snps_chr$i\.clumped >> ms_prs_snps_clumped
-  done
-````
-
-## 2. Apply polygenic scores to UKB
-````unix
-cd /data/Wolfson-UKBB-Dobson/PRS_cross_ancestry/
-module load plink/2.0-20200328
-
-for i in {1..22};
-  do
-    plink2 --pfile /data/Wolfson-UKBB-Dobson/imputed_ukb_genotypes/plink2_files/chr_$i \
-    --score ms_prs_snps list-variants variance-standardize cols=+scoresums \
-    --extract ms_prs_snps_clumped \
-    --out ms_prs_scores_chr$i
-  done
-````
-
-### PCA with 1kg samples and UKB
-First download 1kg reference samples
-````unix
-#! /bin/bash
-#$ -pe smp 40
-#$ -l h_vmem=10G
-#$ -l highmem
-#$ -l h_rt=240:0:0
-#$ -cwd
-#$ -j y
-#$ -o /data/scratch/hmy117
-#$ -t 1:22
-
-cd /data/scratch/hmy117
-
-# wget 1kg
-wget ftp-trace.ncbi.nih.gov/1000genomes/ftp/release/20130502/ALL.chr${SGE_TASK_ID}\.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz
-````
-Then merge with UKB PLINK files
-````unix
-#! /bin/bash
-#$ -pe smp 1
-#$ -l h_vmem=16G
-#$ -l h_rt=1:0:0
-#$ -cwd
-#$ -j y
-#$ -o /data/scratch/hmy117
-#$ -t 1:22
-
-cd /data/scratch/hmy117
-module load plink
-# convert 1kg to plink
-plink --vcf ALL.chr${SGE_TASK_ID}\.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz \
---make-bed \
---biallelic-only \
---out plink_1kg_chr${SGE_TASK_ID}
-
-# join 1kg and plink
-plink --bfile plink_1kg_chr${SGE_TASK_ID} \
---bmerge /data/Wolfson-UKBB-Dobson/raw_ukb_genotype_files/chr${SGE_TASK_ID} \
---out combined_plink_chr${SGE_TASK_ID}
-
-plink --bfile plink_1kg_chr${SGE_TASK_ID} \
---exclude combined_plink_chr${SGE_TASK_ID}\.missnp \
---make-bed \
---out fixed_1kg_chr${SGE_TASK_ID}
-
-# join 1kg and plink
-plink --bfile fixed_1kg_chr${SGE_TASK_ID} \
---bmerge /data/Wolfson-UKBB-Dobson/raw_ukb_genotype_files/chr${SGE_TASK_ID} \
---out combined_plink_chr${SGE_TASK_ID}
-
-# prune
-plink --bfile combined_plink_chr${SGE_TASK_ID} \
---indep-pairwise 1000 50 0.5 \
---geno 0.01 \
---maf 0.05 \
---hwe 1e-5 \
---out pruned_snps_chr${SGE_TASK_ID}
-
-plink --bfile combined_plink_chr${SGE_TASK_ID} \
---extract pruned_snps_chr${SGE_TASK_ID}\.prune.in \
---make-bed \
---out combined_pruned_genotypes_for_pca_chr${SGE_TASK_ID}
-````
-### Combine genotypes and compute PCs
-````unix
-#! /bin/bash
-#$ -pe smp 1
-#$ -l h_vmem=16G
-#$ -l h_rt=240:0:0
-#$ -cwd
-#$ -j y
-#$ -o /data/scratch/hmy117
-
-
-cd /data/scratch/hmy117
-
-module load singularity
-module load plink
-module load R
-
-rm merge_filelist
-for i in {2..22};
-  do
-    echo "combined_pruned_genotypes_for_pca_chr$i.bed combined_pruned_genotypes_for_pca_chr$i.bim combined_pruned_genotypes_for_pca_chr$i.fam" >> merge_filelist
-  done
-
-plink --bfile combined_pruned_genotypes_for_pca_chr1 \
---merge-list merge_filelist \
---make-bed \
---out combined_genotypes_for_pca
-
-singularity exec /data/containers/flashpca/debian-flashpca.simg flashpca --bfile combined_genotypes_for_pca
-````
-
-Now we can explore the data in R.
-
-````R
-library(dplyr)
-library(readr)
-library(ggplot2)
-setwd("/data/Wolfson-UKBB-Dobson/PRS_cross_ancestry/")
-
-# read in scores per chrom
-prs_scores = data.frame()
-for(i in c(1:22)){
-  if( file.exists(paste0("ms_prs_scores_chr",i,".sscore"))){
-    df = read_tsv(paste0("ms_prs_scores_chr",i,".sscore"))
-    prs_scores <<- bind_rows(prs_scores,df)
-  }
-}
-
-prs_scores = as.tbl(prs_scores)
-
-# collate scores across chroms
-prs_scores = prs_scores %>% group_by(IID) %>%
-summarise(PRS = sum(SCORE1_SUM))
-
-# remove missing indivs
-prs_scores = prs_scores %>% filter(IID>=0)
+# prepare pheno file
 
 # read in phenotype data
-source_of_report_data = read_tsv("../ukb_pheno_17_03_21/ukb_pheno_nocognitive_17032021.tsv.gz",col_types=cols_only(
+source_of_report_data = read_tsv("/data/Wolfson-UKBB-Dobson/ukb_pheno_17_03_21/ukb_pheno_nocognitive_17032021.tsv.gz",col_types=cols_only(
   `Source of report of G35 (multiple sclerosis).0.0` = col_character(),
   EID = col_double()
   ))
@@ -244,72 +108,171 @@ source_of_report_data = read_tsv("../ukb_pheno_17_03_21/ukb_pheno_nocognitive_17
 # define MS status
 source_of_report_data = source_of_report_data %>% mutate(MS_status = ifelse(!is.na(`Source of report of G35 (multiple sclerosis).0.0`),1,0))
 
-# read in remainder of phenotype data
-ukb_pheno = read_tsv("../ukb_pheno_911/ukb_pheno_final_MS_1301")
-ukb_pheno = ukb_pheno %>% select(EID,`Age at recruitment.0.0`,Sex.0.0,`Ethnic background.0.0`,contains("rincipal components"),contains("ethnic grouping"))
+source_of_report_data = source_of_report_data %>% mutate("FID" = EID, "IID" = EID) %>%
+select(FID,IID,MS_status)
 
-# combine
-ukb_pheno = ukb_pheno %>% left_join(source_of_report_data,by="EID")
+# exclude participants who have withdrawn
+withdrawn = read_tsv("/data/Wolfson-UKBB-Dobson/helper_progs_and_key/excluded_indivs",col_names=FALSE)
+source_of_report_data = source_of_report_data %>% filter(!IID %in% withdrawn$X1)
 
-# tabulate MS cases vs self-reported ethnicity
-ukb_pheno = ukb_pheno %>% mutate(genetically_british = ifelse(!is.na(`Genetic ethnic grouping.0.0`),1,0))
-table(ukb_pheno$MS_status,ukb_pheno$genetically_british)
+# exclude related individuals
+ms = source_of_report_data %>% filter(MS_status==1)
+kin = read_table2("/data/Wolfson-UKBB-Dobson/helper_progs_and_key/ukb43101_rel_s488282.dat")
+kin_to_excl = kin %>% filter(Kinship>0.0884) %>% filter(!ID1 %in% withdrawn$X1) %>% filter(!ID2 %in% withdrawn$X1)
+
+kin_to_excl = kin_to_excl %>%
+mutate(ID1_MS = ifelse(ID1 %in% ms$IID,"yes","no")) %>%
+mutate(exclusion_id = ifelse(ID1_MS =="yes",ID2,ID1))
+source_of_report_data = source_of_report_data %>% filter(!IID %in% kin_to_excl$exclusion_id)
+
+# exclude non-EUR
+covar = read_tsv("ukb_pheno_21_01_22.tsv")
+ethnicity = covar %>% select(EID,`Genetic ethnic grouping.0.0`)
+eur = ethnicity %>% filter(`Genetic ethnic grouping.0.0` == "Caucasian")
+source_of_report_data = source_of_report_data %>% filter(IID %in% eur$EID)
+
+# create covar file
+covar = covar %>% select(
+  EID,
+  EID,
+  `Age at recruitment.0.0`,
+  Sex.0.0,
+  `Genetic principal components.0.1`,
+  `Genetic principal components.0.2`,
+  `Genetic principal components.0.3`,
+  `Genetic principal components.0.4`
+  )
+
+colnames(covar) = c("IID","age","sex","PC1","PC2","PC3","PC4")
+covar = covar %>% filter(!IID %in% withdrawn$X1)
+covar = covar %>% mutate("FID" = IID) %>% dplyr::select(FID,colnames(covar))
+covar = covar %>% filter(IID %in% source_of_report_data$IID)
+
+write_tsv(source_of_report_data,"ms_pheno.tsv")
+write_tsv(covar,"ms_covars.tsv")
+
 ````
-Tabulating the genetic ancestry (Genetic ethnic grouping) vs MS status, we can see that ~300 people from non-European genetic backgrounds have MS
 
-MS status | Non-british | British
---------- | ----------- | -------
-Control   | 78340       | 407493
-Case      | 303         | 2102
+## Convert genotypes to plink1 format
+
+````unix
+#! /bin/bash
+#$ -pe smp 1
+#$ -l h_vmem=16G
+#$ -l h_rt=1:0:0
+#$ -cwd
+#$ -j y
+#$ -t 1:22
+echo ${SGE_TASK_ID}
+
+cd /data/home/hmy117/PRS_UKB_cross_ancestry/
+module load plink/2.0-20200328
+plink2 \
+--pfile /data/Wolfson-UKBB-Dobson/imputed_ukb_genotypes/plink2_files/chr_${SGE_TASK_ID} \
+--make-bed \
+--out /data/scratch/hmy117/ms_chr_${SGE_TASK_ID} \
+--keep ms_pheno.tsv \
+--extract ms_prs_snps.tsv
+````
+
+
+## Run PRSice in UKB in chunks (1000 iterations of case-control sizes identical to Genes & Health)
+````unix
+qsub create_ukb_chunks.sh
+qsub chunk_prs_nomhc.sh
+qsub chunk_prs_mhc.sh
+````
+
+
+## Run PRSIce for whole cohort
+````unix
+qsub prs_all.sh
+qsub prs_all_mhc.sh
+````
+
+## Process results
 
 ````R
-# combine with PRS
-ukb_pheno = ukb_pheno %>% left_join(prs_scores %>% rename(EID=IID),by="EID")
+library(tidyverse)
+setwd("/data/home/hmy117/PRS_UKB_cross_ancestry/")
 
-# remove NAs
-ukb_pheno = ukb_pheno %>% filter(!is.na(MS_status))
+# first process for whole cohort
+outputs = list()
+for(r in c("0.001","0.01","0.05","0.1","0.2","0.4","0.6")){
+  output_nomhc = read_table2(paste0("/data/scratch/hmy117/whole_cohort_nomhc_output_prs_r",r,".summary"))
+  output_mhc = read_table2(paste0("/data/scratch/hmy117/whole_cohort_mhc_output_prs_r",r,".summary"))
+  output_nomhc$MHC = "No MHC"
+  output_mhc$MHC = "MHC"
+  output = bind_rows(output_mhc,output_nomhc)
+  output$clump_r2 = r   
+  outputs[[length(outputs)+1]] = output
+}
+outputs = do.call("bind_rows",outputs)
+write_csv(outputs,"whole_cohort_prs_results.csv")
+
+
+# process iterations
+outputs = list()
+for(i in c(1:1000)){
+  outputs[[i]] = read_tsv(paste0("/data/scratch/hmy117/output_prs_",i,".summary"))
+}
+outputs = do.call("bind_rows",outputs)
+outputs$mhc = "MHC"
+
+n_extreme = outputs %>% filter(PRS.R2.adj<0.011) %>% nrow
+n_total = outputs %>% nrow
+pval = (n_extreme + 1) / (n_total + 1)
+
+# repeat without mhc
+outputs_nomhc = list()
+for(i in c(1:1000)){
+  outputs_nomhc[[i]] = read_tsv(paste0("/data/scratch/hmy117/output_prs_nomhc_",i,".summary"),col_types = "ccddddddddddd")
+}
+outputs_nomhc = do.call("bind_rows",outputs_nomhc)
+outputs_nomhc$mhc = "No_MHC"
+n_extreme = outputs_nomhc %>% filter(PRS.R2.adj<0.015) %>% nrow
+n_total = outputs_nomhc %>% nrow
+pval = (n_extreme + 1) / (n_total + 1)
+
+# read in whole cohort stats
+outputs_nomhc$n_case = 42
+outputs$n_case = 42
+res1 = read_tsv("/data/scratch/hmy117/whole_cohort_nomhc_output_prs.summary")
+res1$mhc = "No_MHC"
+res1$n_case = 2091
+res2 = read_tsv("/data/scratch/hmy117/whole_cohort_output_prs.summary")
+res2$mhc = "MHC"
+res2$n_case = 2091
+combo = bind_rows(outputs,outputs_nomhc,res1,res2)
+combo %>% group_by(mhc,n_case) %>% summarise(mean(PRS.R2.adj))
+
+plot_dat = combo %>% group_by(mhc,n_case) %>% summarise(mean_r2 = mean(PRS.R2.adj),lower_ci = quantile(PRS.R2.adj,0.025),upper_ci = quantile(PRS.R2.adj,0.975))
+plot_dat$group = c("MHC PRS: permuted sample","MHC PRS: whole cohort","Non-MHC PRS: permuted sample","Non-MHC PRS: whole cohort")
+
+ggplot(plot_dat,aes(mean_r2*100,group,col=mhc))+
+geom_point(size=3)+
+geom_errorbarh(mapping=aes(xmin=lower_ci*100,xmax=upper_ci*100,y=group),height=0)+
+theme_minimal()+
+scale_color_manual(values = c("purple","orange"),labels=c("MHC","No MHC"))+
+labs(x="% liability to MS \n explained by PRS",y="PRS",color = "MHC included/excluded")+
+scale_x_continuous(limits=c(0,10))+
+geom_vline(xintercept=0,alpha=0.1)+
+geom_vline(xintercept=1.3,alpha=0.4,color="purple")+
+geom_vline(xintercept=1.2,alpha=0.4,color="orange")
+
+
+# get total n snps
+snps = list()
+for(i in c(1:22)){
+  snps[[i]] = read_tsv(paste0("/data/scratch/hmy117/ms_chr_",i,".bim"),col_names=F)
+}
+snps = do.call("bind_rows",snps)
+
+# look at effect of increasing n
+outputs = list()
+for(i in c(1:40)){
+  outputs[[i]] = read_tsv(paste0("output_prs_increasing_n_",i,".summary"))
+}
+outputs = do.call("bind_rows",outputs)
+outputs$n_case = seq(50,2000,by=50)
 ````
-Plotting the PRS distribution in the whole cohort shows a nice separation of cases and controls.
-````R
-png("prs_distro_overall.png",height=6,width=6,res=300,units="in")
-ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))
-dev.off()
-````
-[PRS_distro_all](https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_overall.png)
-
-The separation of cases and controls is weakened among people of non-British (i.e. non-European) genetic ancestry.
-````R
-ukb_pheno = ukb_pheno %>% mutate(genetically_british = ifelse(genetically_british==0,"Genetically non-British","Genetically British"))
-
-png("prs_distro_ancestry.png",height=6,width=6,res=300,units="in")
-ggplot(ukb_pheno,aes(PRS,fill=factor(MS_status)))+geom_density(alpha=0.5)+labs(fill="MS case/control status")+scale_fill_brewer(palette="Set2",labels=c("Control","MS"))+facet_wrap(~genetically_british)
-dev.off()
-````
-[PRS_distro_ancestry](https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/prs_distro_ancestry.png)
-
-Calculating variance explained (Nagelkerke's Pseudo-R2) demonstrates this quantitatively.
-````R
-library(rcompanion)
-
-null_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
-full_model = glm(data=ukb_pheno,MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
-overall=nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
-
-null_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically British"),MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
-full_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically British"),MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
-british = nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
-
-null_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically non-British"),MS_status~`Age at recruitment.0.0`+Sex.0.0,family=binomial(link="logit"))
-full_model = glm(data=ukb_pheno %>% filter(genetically_british=="Genetically non-British"),MS_status~`Age at recruitment.0.0`+Sex.0.0+PRS,family=binomial(link="logit"))
-nonbritish = nagelkerke(full_model,null_model)$Pseudo.R.squared.for.model.vs.null[3]
-
-c(overall,british,nonbritish)
-````
-Variance explained (Nagelkerke pseudo-R2) by PRS:
-
- Non-british | British   | Overall
- ----------- | -------   | --------
- 0.0168894   | 0.0213398 | 0.0209131
-
-
-````R
