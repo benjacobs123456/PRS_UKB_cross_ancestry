@@ -1,4 +1,3 @@
-cd /genesandhealth/red/BenJacobs/ms_prs/data/
 
 ###############################
 # Step 1 - GWAS & LD QC       #
@@ -9,6 +8,7 @@ cd /genesandhealth/red/BenJacobs/ms_prs/data/
 
 # liftover to hg38
 ````unix
+cd /genesandhealth/red/BenJacobs/ms_prs/data/
 awk 'NR>1{print "chr"$1,$2-1,$2,$3}' discovery_metav3.0.meta > ms_gwas_hg19
 liftOver ms_gwas_hg19 hg19ToHg38.over.chain.gz ms_gwas_hg38 unlifted
 

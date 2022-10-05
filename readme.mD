@@ -1,6 +1,6 @@
-# PRS distributions in UKB MS
+# MS-PRS in a South Asian-ancestry cohort
 
-This pipeline was used to generate PRS in UKB participants of EUR ancestry, and compare the performance with a similarly-constructed PRS in Genes & Health. The pipeline used for Genes & Health is gh_prs_pipeline.mD.
+This pipeline was used to generate PRS in UKB participants of EUR ancestry, and compare the performance with a similarly-constructed PRS in Genes & Health. The pipeline used for Genes & Health is gh_prs_pipeline.mD[https://github.com/benjacobs123456/PRS_UKB_cross_ancestry/blob/main/gh_prs_pipeline.mD].
 
 ## Filter UKB imputed genotype files in PLINK2
 
