@@ -190,6 +190,18 @@ qsub prs_all.sh
 qsub prs_all_mhc.sh
 ````
 
+
+# liftover to hg38
+````unix
+cd /data/home/hmy117/PRS_UKB_cross_ancestry/
+
+awk 'NR>1{print "chr"$1,$3-1,$3,$2}' ./exports_0410/whole_cohort_nomhc_output_prs_r0.4.snp > gh_nomhc_hg38
+/data/Wolfson-UKBB-Dobson/liftover/liftOver gh_nomhc_hg38 /data/Wolfson-UKBB-Dobson/liftover/hg38ToHg19.over.chain.gz gh_nomhc_hg19 unlifted
+
+awk 'NR>1{print "chr"$1,$3-1,$3,$2}' ./exports_0410/whole_cohort_mhc_output_prs_r0.05.snp > gh_mhc_hg38
+/data/Wolfson-UKBB-Dobson/liftover/liftOver gh_mhc_hg38 /data/Wolfson-UKBB-Dobson/liftover/hg38ToHg19.over.chain.gz gh_mhc_hg19 unlifted
+````
+
 ## Process results
 
 ````R
@@ -201,14 +213,15 @@ outputs = list()
 for(r in c("0.001","0.01","0.05","0.1","0.2","0.4","0.6")){
   output_nomhc = read_table2(paste0("/data/scratch/hmy117/whole_cohort_nomhc_output_prs_r",r,".summary"))
   output_mhc = read_table2(paste0("/data/scratch/hmy117/whole_cohort_mhc_output_prs_r",r,".summary"))
-  output_nomhc$MHC = "No MHC"
-  output_mhc$MHC = "MHC"
+  output_nomhc$mhc = "No_MHC"
+  output_mhc$mhc = "MHC"
   output = bind_rows(output_mhc,output_nomhc)
   output$clump_r2 = r   
   outputs[[length(outputs)+1]] = output
 }
 outputs = do.call("bind_rows",outputs)
 write_csv(outputs,"whole_cohort_prs_results.csv")
+whole_cohort_res = outputs
 
 
 # process iterations
@@ -219,7 +232,7 @@ for(i in c(1:1000)){
 outputs = do.call("bind_rows",outputs)
 outputs$mhc = "MHC"
 
-n_extreme = outputs %>% filter(PRS.R2.adj<0.011) %>% nrow
+n_extreme = outputs %>% filter(PRS.R2.adj<0.0108414) %>% nrow
 n_total = outputs %>% nrow
 pval = (n_extreme + 1) / (n_total + 1)
 
@@ -230,36 +243,58 @@ for(i in c(1:1000)){
 }
 outputs_nomhc = do.call("bind_rows",outputs_nomhc)
 outputs_nomhc$mhc = "No_MHC"
-n_extreme = outputs_nomhc %>% filter(PRS.R2.adj<0.015) %>% nrow
+n_extreme = outputs_nomhc %>% filter(PRS.R2.adj<0.0146176) %>% nrow
 n_total = outputs_nomhc %>% nrow
 pval = (n_extreme + 1) / (n_total + 1)
 
-# read in whole cohort stats
+# add in case n
 outputs_nomhc$n_case = 42
 outputs$n_case = 42
-res1 = read_tsv("/data/scratch/hmy117/whole_cohort_nomhc_output_prs.summary")
-res1$mhc = "No_MHC"
-res1$n_case = 2091
-res2 = read_tsv("/data/scratch/hmy117/whole_cohort_output_prs.summary")
-res2$mhc = "MHC"
-res2$n_case = 2091
-combo = bind_rows(outputs,outputs_nomhc,res1,res2)
+
+# add in whole cohort stats
+whole_cohort_res$n_case = 2091
+
+# get best score for MHC and non-MHC in whole cohort
+whole_cohort_res = whole_cohort_res %>% group_by(mhc) %>% slice_max(PRS.R2.adj)
+
+# combine
+combo = bind_rows(outputs,outputs_nomhc,whole_cohort_res)
 combo %>% group_by(mhc,n_case) %>% summarise(mean(PRS.R2.adj))
 
 plot_dat = combo %>% group_by(mhc,n_case) %>% summarise(mean_r2 = mean(PRS.R2.adj),lower_ci = quantile(PRS.R2.adj,0.025),upper_ci = quantile(PRS.R2.adj,0.975))
-plot_dat$group = c("MHC PRS: permuted sample","MHC PRS: whole cohort","Non-MHC PRS: permuted sample","Non-MHC PRS: whole cohort")
+plot_dat$cohort = "UKB"
 
-ggplot(plot_dat,aes(mean_r2*100,group,col=mhc))+
-geom_point(size=3)+
-geom_errorbarh(mapping=aes(xmin=lower_ci*100,xmax=upper_ci*100,y=group),height=0)+
-theme_minimal()+
-scale_color_manual(values = c("purple","orange"),labels=c("MHC","No MHC"))+
-labs(x="% liability to MS \n explained by PRS",y="PRS",color = "MHC included/excluded")+
-scale_x_continuous(limits=c(0,10))+
-geom_vline(xintercept=0,alpha=0.1)+
-geom_vline(xintercept=1.3,alpha=0.4,color="purple")+
-geom_vline(xintercept=1.2,alpha=0.4,color="orange")
+# add in GH estimates
+gh_prs = read_csv("./exports_0410/prs_summaries.csv") %>%
+  filter(MHC %in% c("nomhc","mhc")) %>%
+  group_by(MHC) %>%
+  slice_max(PRS.R2.adj) %>%
+  mutate(n_case = 42, cohort = "G&H", lower_ci=PRS.R2.adj, upper_ci=PRS.R2.adj) %>%
+  dplyr::rename("mean_r2" = PRS.R2.adj,"mhc" = MHC) %>%
+  dplyr::select(mhc,n_case,mean_r2,lower_ci,upper_ci,cohort) %>%
+  mutate(mhc = ifelse(mhc == "mhc","MHC","No_MHC"))
 
+plot_dat = plot_dat %>% bind_rows(gh_prs)
+
+plot_dat = plot_dat %>%
+  mutate(cohort = ifelse(cohort == "UKB" & n_case == 42,"UKB subset (EUR)",
+  ifelse(cohort == "UKB" & n_case == 2091,"UKB all (EUR)","G&H (SAS)")))
+
+p=ggplot(plot_dat,aes(mean_r2*100,cohort,col=mhc))+
+  geom_point(size=3,position=ggstance::position_dodgev(height=0.3))+
+  geom_errorbarh(mapping=aes(xmin=lower_ci*100,xmax=upper_ci*100,y=cohort),height=0,
+    position = ggstance::position_dodgev(height=0.3))+
+  theme_minimal()+
+  scale_color_manual(values = c("purple","orange"),labels=c("MHC","No MHC"))+
+  labs(x="% liability to MS \n explained by PRS",y="PRS",color = "MHC included/excluded")+
+  scale_x_continuous(limits=c(0,10))+
+  geom_vline(xintercept=0,alpha=0.1)+
+  geom_vline(xintercept=1.08,alpha=0.4,color="purple")+
+  geom_vline(xintercept=1.46,alpha=0.4,color="orange")
+
+png("prs_comparison.png",res=300,units="in",width=6,height=3)
+p
+dev.off()
 
 # get total n snps
 snps = list()
@@ -268,11 +303,33 @@ for(i in c(1:22)){
 }
 snps = do.call("bind_rows",snps)
 
-# look at effect of increasing n
-outputs = list()
-for(i in c(1:40)){
-  outputs[[i]] = read_tsv(paste0("output_prs_increasing_n_",i,".summary"))
-}
-outputs = do.call("bind_rows",outputs)
-outputs$n_case = seq(50,2000,by=50)
+
+# compare snps used in PRS
+gh_prs_snps_nomhc = read_table2("./exports_0410/whole_cohort_nomhc_output_prs_r0.4.snp",col_types = "cccdc")
+gh_prs_snps_mhc = read_table2("./exports_0410/whole_cohort_mhc_output_prs_r0.05.snp",col_types = "cccdc")
+
+# read in lifted coordinates
+gh_prs_snps_nomhc_hg19 = read_table2("gh_nomhc_hg19",col_types = "cccc",col_names = F)
+gh_prs_snps_mhc_hg19 = read_table2("gh_mhc_hg19",col_types = "cccc",col_names = F)
+
+# combine
+gh_prs_snps_nomhc = gh_prs_snps_nomhc %>%
+  left_join(gh_prs_snps_nomhc_hg19 %>%
+      dplyr::rename("SNP" = X4),
+      by="SNP") %>%
+      dplyr::select(-X1,-X2) %>%
+      mutate(hg19_coord = paste0(CHR,":",X3))
+
+gh_prs_snps_mhc = gh_prs_snps_mhc %>%
+  left_join(gh_prs_snps_mhc_hg19 %>%
+      dplyr::rename("SNP" = X4),
+      by="SNP") %>%
+      dplyr::select(-X1,-X2) %>%
+      mutate(hg19_coord = paste0(CHR,":",X3))
+
+
+snps = snps %>% mutate(chrpos =paste0(X1,":",X4))
+gh_prs_snps_mhc %>% filter(hg19_coord %in% snps$chrpos)
+gh_prs_snps_nomhc %>% filter(hg19_coord %in% snps$chrpos)
+
 ````
