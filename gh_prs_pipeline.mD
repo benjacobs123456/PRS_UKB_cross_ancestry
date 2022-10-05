@@ -1,3 +1,6 @@
+# MS-PRS in a South Asian-ancestry cohort
+
+This pipeline was used to generate PRS in UKB participants of EUR ancestry, and compare the performance with a similarly-constructed PRS in Genes & Health. Here is the pipeline used for the Genes & Health cohort.
 
 ###############################
 # Step 1 - GWAS & LD QC       #
